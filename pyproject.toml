@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "keymaster"
+version = "0.1.0"
+description = "Janet-owned automated API key rotation system"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "playwright>=1.44",
+    "python-dotenv>=1.0",
+    "PyGithub>=2.3",
+    "python-telegram-bot>=21.0",
+    "cryptography>=42",
+    "rich>=13",
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "mypy>=1.9",
+]
+
+[project.scripts]
+keymaster = "keymaster:main"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
