@@ -1,17 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "==> Installing Keymaster dependencies"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
 
-# 1. Python deps
-pip install -e .[dev]
+echo "==> Installing Keymaster (editable + dev extras)"
 
-# 2. Playwright browser
-playwright install chromium
+python3 -m pip install -e ".[dev]"
 
-# 3. Check op CLI
+echo "==> Installing Playwright Chromium"
+python3 -m playwright install chromium
+
 if ! command -v op &>/dev/null; then
   echo "WARNING: 1Password CLI (op) not found — install from https://1password.com/downloads/command-line/"
 fi
 
-echo "==> Done.  Copy .env.example → .env and fill in values."
+if ! command -v gpg &>/dev/null; then
+  echo "WARNING: gpg not found — glass-break encrypted backups will fail until GnuPG is installed"
+fi
+
+mkdir -p logs
+
+if [[ ! -f .env ]]; then
+  cp .env.example .env
+  echo "==> Created .env from .env.example — fill in values before rotating"
+else
+  echo "==> .env already present"
+fi
+
+echo "==> Done."
+echo "    python keymaster.py --list-providers"
+echo "    python keymaster.py --audit"
+echo "    python keymaster.py --rotate --dry-run"

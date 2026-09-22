@@ -11,27 +11,33 @@ log = logging.getLogger(__name__)
 
 
 class BaseAPIRotator(ABC):
-    """Rotate a key via the provider's REST management API."""
+    """Rotate a key via the provider's REST management API.
+
+    Contract for subclasses
+    -----------------------
+    ``rotate`` should prefer this order when the provider allows it:
+
+    1. Create a new credential while the current key is still valid
+    2. Validate the new credential
+    3. Revoke / delete the old credential(s)
+    4. Return the new secret
+
+    That keeps rotations closer to idempotent: if a later vault write fails,
+    the new key still exists and can be recovered from glass-break or the
+    provider console.
+    """
 
     TIMEOUT = 30.0
 
-    # ------------------------------------------------------------------ #
-    #  Subclasses must implement                                            #
-    # ------------------------------------------------------------------ #
-
     @abstractmethod
     def rotate(self, current_key: str) -> str:
-        """Delete the old key, create a new one, return the new key."""
+        """Create a new key, revoke the old one when safe, return the new key."""
         ...
 
     @abstractmethod
     def validate(self, key: str) -> tuple[bool, str]:
-        """Return (ok, message) for *key*."""
+        """Return ``(ok, message)`` for *key* without mutating credentials."""
         ...
-
-    # ------------------------------------------------------------------ #
-    #  Helpers                                                              #
-    # ------------------------------------------------------------------ #
 
     def _client(self, api_key: str, base_url: str) -> httpx.Client:
         return httpx.Client(

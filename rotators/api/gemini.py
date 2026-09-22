@@ -1,8 +1,9 @@
-"""Google Gemini API key rotator (via Google AI Studio / Cloud API keys)."""
+"""Google Gemini API key rotator (via Google Cloud API Keys API)."""
 
 from __future__ import annotations
 
 import logging
+import os
 
 import httpx
 
@@ -10,28 +11,34 @@ from rotators.api.base_api import BaseAPIRotator
 
 log = logging.getLogger(__name__)
 
-# Google Cloud REST API for API keys
 BASE_URL = "https://apikeys.googleapis.com/v2"
 
 
 class Rotator(BaseAPIRotator):
     """
-    NOTE: Google API key rotation requires a service-account token with
-    roles/serviceusage.apiKeysAdmin.  The `current_key` passed in is
-    an OAuth2 access token, not the Gemini key itself.
+    Google API key rotation requires an OAuth2 / service-account access token
+    with ``roles/serviceusage.apiKeysAdmin``. The ``current_key`` argument to
+    ``rotate`` is that access token — not the Gemini browser key itself.
+
+    ``validate`` takes the Gemini API key string and hits Generative Language.
+    Set ``GOOGLE_CLOUD_PROJECT`` in the environment (also documented in
+    ``.env.example``).
     """
 
     def rotate(self, current_key: str) -> str:
-        headers = {"Authorization": f"Bearer {current_key}"}
-        with httpx.Client(timeout=self.TIMEOUT) as client:
-            # Assumes project is stored in env; simplified for clarity
-            import os
-            project = os.getenv("GOOGLE_CLOUD_PROJECT", "")
-            parent = f"projects/{project}/locations/global"
+        project = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
+        if not project:
+            raise RuntimeError(
+                "GOOGLE_CLOUD_PROJECT is required for Gemini key rotation"
+            )
 
+        headers = {"Authorization": f"Bearer {current_key}"}
+        parent = f"projects/{project}/locations/global"
+
+        with httpx.Client(timeout=self.TIMEOUT) as client:
             resp = client.get(f"{BASE_URL}/{parent}/keys", headers=headers)
             resp.raise_for_status()
-            keys = resp.json().get("keys", [])
+            old_keys = resp.json().get("keys", [])
 
             new_resp = client.post(
                 f"{BASE_URL}/{parent}/keys",
@@ -39,10 +46,21 @@ class Rotator(BaseAPIRotator):
                 json={"displayName": "keymaster-rotated"},
             )
             new_resp.raise_for_status()
-            new_key = new_resp.json()["keyString"]
+            new_payload = new_resp.json()
+            new_key = new_payload.get("keyString")
+            new_name = new_payload.get("name")
+            if not new_key:
+                raise RuntimeError("Gemini create-key response missing keyString")
 
-            for k in keys:
-                client.delete(f"{BASE_URL}/{k['name']}", headers=headers)
+            ok, msg = self.validate(new_key)
+            if not ok:
+                raise RuntimeError(f"Gemini new key failed validation: {msg}")
+
+            for k in old_keys:
+                name = k.get("name")
+                if not name or name == new_name:
+                    continue
+                client.delete(f"{BASE_URL}/{name}", headers=headers)
 
         log.info("gemini: rotated successfully")
         return new_key
@@ -50,7 +68,8 @@ class Rotator(BaseAPIRotator):
     def validate(self, key: str) -> tuple[bool, str]:
         try:
             resp = httpx.get(
-                f"https://generativelanguage.googleapis.com/v1beta/models?key={key}",
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                params={"key": key},
                 timeout=self.TIMEOUT,
             )
             if resp.status_code == 200:

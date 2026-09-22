@@ -13,33 +13,41 @@ log = logging.getLogger(__name__)
 BASE_URL = "https://api.anthropic.com/v1"
 
 
+def _headers(api_key: str) -> dict[str, str]:
+    return {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
+
+
 class Rotator(BaseAPIRotator):
     def rotate(self, current_key: str) -> str:
         with httpx.Client(timeout=self.TIMEOUT) as client:
-            # List existing keys
-            resp = client.get(
-                f"{BASE_URL}/api-keys",
-                headers={"x-api-key": current_key, "anthropic-version": "2023-06-01"},
-            )
-            resp.raise_for_status()
-            keys = resp.json().get("data", [])
+            list_resp = client.get(f"{BASE_URL}/api-keys", headers=_headers(current_key))
+            list_resp.raise_for_status()
+            old_keys = list_resp.json().get("data", [])
 
-            # Create new key
             new_resp = client.post(
                 f"{BASE_URL}/api-keys",
-                headers={"x-api-key": current_key, "anthropic-version": "2023-06-01"},
+                headers=_headers(current_key),
                 json={"name": "keymaster-rotated"},
             )
             new_resp.raise_for_status()
-            new_key = new_resp.json()["key"]
+            payload = new_resp.json()
+            new_key = payload.get("key") or payload.get("api_key")
+            if not new_key:
+                raise RuntimeError("Anthropic create-key response missing key material")
+            new_id = payload.get("id")
 
-            # Delete old keys (except the new one)
-            for k in keys:
-                if k["key"] != new_key:
-                    client.delete(
-                        f"{BASE_URL}/api-keys/{k['id']}",
-                        headers={"x-api-key": new_key, "anthropic-version": "2023-06-01"},
-                    )
+            ok, msg = self.validate(new_key)
+            if not ok:
+                raise RuntimeError(f"Anthropic new key failed validation: {msg}")
+
+            for k in old_keys:
+                kid = k.get("id")
+                if not kid or kid == new_id:
+                    continue
+                client.delete(
+                    f"{BASE_URL}/api-keys/{kid}",
+                    headers=_headers(new_key),
+                )
 
         log.info("anthropic: rotated successfully")
         return new_key
@@ -48,7 +56,7 @@ class Rotator(BaseAPIRotator):
         try:
             resp = httpx.get(
                 f"{BASE_URL}/models",
-                headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
+                headers=_headers(key),
                 timeout=self.TIMEOUT,
             )
             if resp.status_code == 200:

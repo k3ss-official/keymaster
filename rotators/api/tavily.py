@@ -15,14 +15,26 @@ BASE_URL = "https://api.tavily.com"
 
 class Rotator(BaseAPIRotator):
     def rotate(self, current_key: str) -> str:
-        """Regenerate Tavily API key via the account API."""
+        """Regenerate Tavily API key via the account API.
+
+        Tavily's regenerate endpoint swaps the key in one call. There is no
+        separate create-then-delete path; treat a failed vault write after
+        success as a glass-break recovery case.
+        """
         with httpx.Client(timeout=self.TIMEOUT) as client:
             resp = client.post(
                 f"{BASE_URL}/key/regenerate",
                 headers={"Authorization": f"Bearer {current_key}"},
             )
             resp.raise_for_status()
-            new_key = resp.json()["api_key"]
+            new_key = resp.json().get("api_key")
+            if not new_key:
+                raise RuntimeError("Tavily regenerate response missing api_key")
+
+        ok, msg = self.validate(new_key)
+        if not ok:
+            raise RuntimeError(f"Tavily new key failed validation: {msg}")
+
         log.info("tavily: rotated successfully")
         return new_key
 

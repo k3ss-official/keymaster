@@ -21,25 +21,41 @@ class Rotator(BaseAPIRotator):
             resp.raise_for_status()
             username = resp.json()["name"]
 
-            # List tokens
-            tokens_resp = client.get(f"{BASE_URL}/user-tokens?username={username}", headers=headers)
+            tokens_resp = client.get(
+                f"{BASE_URL}/user-tokens",
+                params={"username": username},
+                headers=headers,
+            )
             tokens_resp.raise_for_status()
             tokens = tokens_resp.json()
+            if not isinstance(tokens, list):
+                tokens = []
 
-            # Create new token
             new_resp = client.post(
-                f"{BASE_URL}/user-tokens?username={username}",
+                f"{BASE_URL}/user-tokens",
+                params={"username": username},
                 headers=headers,
                 json={"name": "keymaster-rotated", "type": "write"},
             )
             new_resp.raise_for_status()
-            new_token = new_resp.json()["accessToken"]
+            new_token = new_resp.json().get("accessToken") or new_resp.json().get(
+                "token"
+            )
+            if not new_token:
+                raise RuntimeError("HuggingFace create-token response missing token")
 
-            # Delete old tokens
+            ok, msg = self.validate(new_token)
+            if not ok:
+                raise RuntimeError(f"HuggingFace new token failed validation: {msg}")
+
             new_headers = {"Authorization": f"Bearer {new_token}"}
             for tok in tokens:
+                name = tok.get("name")
+                if not name or name == "keymaster-rotated":
+                    continue
                 client.delete(
-                    f"{BASE_URL}/user-tokens?username={username}&name={tok['name']}",
+                    f"{BASE_URL}/user-tokens",
+                    params={"username": username, "name": name},
                     headers=new_headers,
                 )
 
@@ -48,7 +64,11 @@ class Rotator(BaseAPIRotator):
 
     def validate(self, key: str) -> tuple[bool, str]:
         try:
-            resp = httpx.get(f"{BASE_URL}/whoami-v2", headers={"Authorization": f"Bearer {key}"}, timeout=self.TIMEOUT)
+            resp = httpx.get(
+                f"{BASE_URL}/whoami-v2",
+                headers={"Authorization": f"Bearer {key}"},
+                timeout=self.TIMEOUT,
+            )
             if resp.status_code == 200:
                 return True, "OK"
             return False, f"HTTP {resp.status_code}"
