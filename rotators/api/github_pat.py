@@ -1,4 +1,4 @@
-"""GitHub PAT rotator — deletes old fine-grained PAT and creates a new one."""
+"""GitHub PAT rotator — creates a new fine-grained PAT then deletes the old ones."""
 
 from __future__ import annotations
 
@@ -22,12 +22,12 @@ class Rotator(BaseAPIRotator):
             "X-GitHub-Api-Version": "2022-11-28",
         }
         with httpx.Client(timeout=self.TIMEOUT) as client:
-            # List fine-grained PATs
             resp = client.get(f"{BASE_URL}/user/personal-access-tokens", headers=headers)
             resp.raise_for_status()
             tokens = resp.json()
+            if not isinstance(tokens, list):
+                tokens = []
 
-            # Create new PAT
             expiry = (datetime.date.today() + datetime.timedelta(days=90)).isoformat()
             new_resp = client.post(
                 f"{BASE_URL}/user/personal-access-tokens",
@@ -39,13 +39,23 @@ class Rotator(BaseAPIRotator):
                 },
             )
             new_resp.raise_for_status()
-            new_token = new_resp.json()["token"]
+            new_payload = new_resp.json()
+            new_token = new_payload.get("token")
+            new_id = new_payload.get("id")
+            if not new_token:
+                raise RuntimeError("GitHub create-PAT response missing token material")
 
-            # Delete old tokens
+            ok, msg = self.validate(new_token)
+            if not ok:
+                raise RuntimeError(f"GitHub new PAT failed validation: {msg}")
+
             new_headers = {**headers, "Authorization": f"Bearer {new_token}"}
             for tok in tokens:
+                tid = tok.get("id")
+                if not tid or tid == new_id:
+                    continue
                 client.delete(
-                    f"{BASE_URL}/user/personal-access-tokens/{tok['id']}",
+                    f"{BASE_URL}/user/personal-access-tokens/{tid}",
                     headers=new_headers,
                 )
 
@@ -56,7 +66,10 @@ class Rotator(BaseAPIRotator):
         try:
             resp = httpx.get(
                 f"{BASE_URL}/user",
-                headers={"Authorization": f"Bearer {key}", "Accept": "application/vnd.github+json"},
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Accept": "application/vnd.github+json",
+                },
                 timeout=self.TIMEOUT,
             )
             if resp.status_code == 200:

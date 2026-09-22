@@ -13,20 +13,28 @@ PORTAL_URL = "https://www.llama.com/llama-api/"
 
 class Rotator(BaseBrowserRotator):
     def rotate(self, current_key: str) -> str:
+        """
+        Requires an already-authenticated Chromium session on the MBP (Janet).
+        Portal selectors are brittle — verify on hardware before enabling launchd.
+        """
         with self._browser() as pw:
             browser = pw.chromium.launch(headless=self.HEADLESS)
-            page = browser.new_page()
-            page.goto(PORTAL_URL)
-            page.wait_for_selector("[aria-label='API Keys']", timeout=15_000)
+            try:
+                page = browser.new_page()
+                page.goto(PORTAL_URL)
+                page.wait_for_selector("[aria-label='API Keys']", timeout=15_000)
 
-            # Revoke old key
-            page.click("[data-testid='revoke-key']:first-child")
-            page.click("[data-testid='confirm-revoke']")
+                page.click("[data-testid='revoke-key']:first-child")
+                page.click("[data-testid='confirm-revoke']")
 
-            # Generate new key
-            page.click("[data-testid='generate-api-key']")
-            new_key = page.inner_text("[data-testid='new-key-display']")
-            browser.close()
+                page.click("[data-testid='generate-api-key']")
+                new_key = page.inner_text("[data-testid='new-key-display']")
+            finally:
+                browser.close()
+
+        new_key = new_key.strip()
+        if not new_key:
+            raise RuntimeError("Meta portal returned empty key material")
 
         log.info("meta: rotated successfully")
-        return new_key.strip()
+        return new_key

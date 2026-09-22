@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
+from typing import Iterator
 
 log = logging.getLogger(__name__)
 
@@ -19,10 +21,19 @@ class BaseBrowserRotator(ABC):
         ...
 
     def validate(self, key: str) -> tuple[bool, str]:
-        """Browser rotators validate by attempting rotation — override if cheaper check exists."""
-        return True, "browser-rotator: validate not implemented"
+        """Cheap validate is provider-specific; default is a no-op pass.
 
-    def _browser(self):
-        """Return a configured Playwright browser context manager."""
+        Browser portals rarely expose a key-check endpoint. Override when a
+        lightweight API ping exists (e.g. DeepSeek chat completions).
+        """
+        if not key:
+            return False, "empty key"
+        return True, "browser-rotator: validate skipped (no cheap check)"
+
+    @contextmanager
+    def _browser(self) -> Iterator:
+        """Yield a Playwright instance; caller must close browsers/pages."""
         from playwright.sync_api import sync_playwright
-        return sync_playwright()
+
+        with sync_playwright() as pw:
+            yield pw
